@@ -2,26 +2,8 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react'
 import * as THREE from 'three'
-import { 
-  RotateCcw, 
-  Fullscreen, 
-  X, 
-  ArrowLeftRight, 
-  ArrowUpDown, 
-  Layers, 
-  Eye, 
-  Opacity 
-} from 'lucide-react'
-import { 
-  WarehouseItem, 
-  GridSize, 
-  CameraPosition, 
-  CellInfo, 
-  WarehouseLevelStat, 
-  ViewMode, 
-  OpacityMode,
-  AxisHighlight 
-} from '@/types/warehouse'
+import { X, RotateCcw, Fullscreen } from 'lucide-react'
+import { WarehouseItem, GridSize, CellInfo } from '../types/warehouse'
 
 interface Warehouse3DCubeProps {
   cubeData: WarehouseItem[]
@@ -29,7 +11,7 @@ interface Warehouse3DCubeProps {
 }
 
 const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize }) => {
-  // Refs for Three.js
+  // Three.js refs
   const containerRef = useRef<HTMLDivElement>(null)
   const fullscreenContainerRef = useRef<HTMLDivElement>(null)
   const sceneRef = useRef<THREE.Scene | null>(null)
@@ -39,71 +21,32 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
   const currentContainerRef = useRef<HTMLDivElement | null>(null)
 
   // State
-  const [selectedLevel, setSelectedLevel] = useState<CellInfo | null>(null)
+  const [selectedCell, setSelectedCell] = useState<CellInfo | null>(null)
   const [fullscreenDialog, setFullscreenDialog] = useState(false)
-  const [viewMode, setViewMode] = useState<ViewMode>('normal')
-  const [opacityMode, setOpacityMode] = useState<OpacityMode>('solid')
-  const [cameraPosition, setCameraPosition] = useState<CameraPosition>({ x: 0, y: 0, z: 0 })
-  const [axisCells, setAxisCells] = useState<CellInfo[]>([])
-  const [columnCells, setColumnCells] = useState<CellInfo[]>([])
+  const [cameraPosition, setCameraPosition] = useState({ x: 0, y: 0, z: 0 })
 
-  // Three.js objects
-  const [instancedMesh, setInstancedMesh] = useState<THREE.InstancedMesh | null>(null)
-  const [cellDataMap, setCellDataMap] = useState<Map<string, CellInfo>>(new Map())
-  const [warehouseLevelStats, setWarehouseLevelStats] = useState<WarehouseLevelStat[]>([])
-  const [axisHighlights, setAxisHighlights] = useState<AxisHighlight[]>([])
-  const [axisElements, setAxisElements] = useState<THREE.Object3D[]>([])
+  // Store cube meshes for raycasting
+  const cubesRef = useRef<THREE.Mesh[]>([])
+  const cellDataRef = useRef<Map<THREE.Mesh, CellInfo>>(new Map())
 
   // Mouse controls
-  const [mouseControls, setMouseControls] = useState({
+  const mouseControlsRef = useRef({
     isMouseDown: false,
     mouseX: 0,
     mouseY: 0,
     lastWheelTime: 0
   })
 
-  // Initial camera position
-  const initialCameraPosition = { x: -15, y: 15, z: 20 }
-
-  // Calculate optimal camera position based on warehouse size
-  const calculateOptimalCameraPosition = useCallback(() => {
-    const width = gridSize.x * 2
-    const depth = gridSize.y * 2
-    const height = gridSize.z * 2
-
-    // Calculate warehouse diagonal for camera distance
-    const warehouseDiagonal = Math.sqrt(width * width + depth * depth + height * height)
-
-    // Calculate minimum distance needed to fit warehouse in view
-    const fovRadians = (75 * Math.PI) / 180
-    const minDistance = (warehouseDiagonal / 2) / Math.tan(fovRadians / 2) * 1.2
-
-    const baseDistance = Math.max(minDistance, 15)
-    const cameraDistance = baseDistance * 1.5
-
-    // Position camera at optimal distance on a sphere around warehouse center
-    const theta = Math.PI / 4 // 45° horizontal angle
-    const phi = Math.PI / 3   // 60° vertical angle (elevated view)
-
-    const position = {
-      x: cameraDistance * Math.sin(phi) * Math.cos(theta),
-      y: cameraDistance * Math.cos(phi),
-      z: cameraDistance * Math.sin(phi) * Math.sin(theta)
-    }
-
-    return position
-  }, [gridSize])
-
   // Initialize Three.js scene
   const initThreeJS = useCallback(() => {
     if (!containerRef.current) return
 
-    // CREATE SCENE - This is the 3D world container
+    // Create scene
     const scene = new THREE.Scene()
     scene.background = new THREE.Color(0x1a1a1a)
     sceneRef.current = scene
 
-    // CREATE CAMERA - This defines the viewer's perspective
+    // Create camera
     const camera = new THREE.PerspectiveCamera(
       75,
       containerRef.current.clientWidth / containerRef.current.clientHeight,
@@ -111,42 +54,44 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
       1000
     )
     
-    // Set adaptive camera position
-    const optimalCameraPosition = calculateOptimalCameraPosition()
-    camera.position.set(optimalCameraPosition.x, optimalCameraPosition.y, optimalCameraPosition.z)
+    // Position camera to view the grid
+    const distance = Math.max(gridSize.x, gridSize.y, gridSize.z) * 3
+    camera.position.set(distance, distance, distance)
     camera.lookAt(0, 0, 0)
     cameraRef.current = camera
 
-    // CREATE RENDERER - This draws the 3D scene to a 2D canvas
+    // Create renderer
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
     renderer.setSize(containerRef.current.clientWidth, containerRef.current.clientHeight)
+    console.log(containerRef.current.clientHeight)
     renderer.shadowMap.enabled = true
     renderer.shadowMap.type = THREE.PCFSoftShadowMap
     renderer.setClearColor(0x1a1a1a, 1)
-    containerRef.current.appendChild(renderer.domElement)
+    
+    // Ensure canvas fills the container
+    const canvas = renderer.domElement
+    canvas.style.position = 'absolute'
+    canvas.style.top = '0'
+    canvas.style.left = '0'
+    canvas.style.width = '100%'
+    canvas.style.height = '100%'
+    canvas.style.zIndex = '1'
+    
+    containerRef.current.appendChild(canvas)
     rendererRef.current = renderer
     currentContainerRef.current = containerRef.current
 
-    // CREATE LIGHTING SYSTEM
-    const ambientLight = new THREE.AmbientLight(0x404040, 0.6)
+    // Add lighting
+    const ambientLight = new THREE.AmbientLight(0x404040, 10)
     scene.add(ambientLight)
 
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8)
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 1.5)
     directionalLight.position.set(10, 10, 5)
-    directionalLight.castShadow = true
-    directionalLight.shadow.mapSize.width = 2048
-    directionalLight.shadow.mapSize.height = 2048
+    directionalLight.castShadow = false
     scene.add(directionalLight)
 
-    // CREATE FLOOR GRID HELPER
-    const gridHelper = new THREE.GridHelper(
-      Math.max(gridSize.x, gridSize.y) * 2,
-      Math.max(gridSize.x, gridSize.y),
-      0x444444,
-      0x444444
-    )
-    gridHelper.position.y = -1
-    scene.add(gridHelper)
+    // Add coordinate axes with labels
+    addCoordinateAxes()
 
     // Setup mouse controls
     addMouseControls()
@@ -155,126 +100,177 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
     animate()
 
     return () => {
-      // Cleanup
       removeMouseControls()
       if (animationIdRef.current) {
         cancelAnimationFrame(animationIdRef.current)
       }
     }
-  }, [gridSize, calculateOptimalCameraPosition])
+  }, [gridSize])
 
-  // Create warehouse cubes using InstancedMesh for performance
-  const createWarehouseCubes = useCallback(() => {
-    if (!sceneRef.current || !cameraRef.current) return
+  // Create warehouse cubes
+  const createCubes = useCallback(() => {
+    if (!sceneRef.current) return
 
     // Clear existing cubes
-    if (instancedMesh) {
-      sceneRef.current.remove(instancedMesh)
-    }
+    cubesRef.current.forEach(cube => {
+      sceneRef.current?.remove(cube)
+    })
+    cubesRef.current = []
+    cellDataRef.current.clear()
 
-    // Clear existing cell data
-    const newCellDataMap = new Map<string, CellInfo>()
-
-    // Create instanced geometry for performance
-    const cubeGeometry = new THREE.BoxGeometry(1.8, 1.8, 1.8)
-    const cubeMaterial = new THREE.MeshLambertMaterial({ color: 0x666666 })
-    const maxInstances = gridSize.x * gridSize.y * gridSize.z
-
-    const mesh = new THREE.InstancedMesh(cubeGeometry, cubeMaterial, maxInstances)
-    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
-    mesh.castShadow = true
-    mesh.receiveShadow = true
-
-    let instanceIndex = 0
-    const matrix = new THREE.Matrix4()
-    const color = new THREE.Color()
+    const verticalOffset = - (gridSize.z * 2) / 2
 
     // Create cubes for each grid position
     for (let x = 0; x < gridSize.x; x++) {
       for (let y = 0; y < gridSize.y; y++) {
-        for (let z = 1; z <= gridSize.z; z++) {
-          const key = `${x},${y},${z}`
-          
-          // Find data for this position
-          const dataItem = cubeData.find(item => item.level === z)
+        for (let z = 0; z < gridSize.z; z++) {
+          // Position cube with corrected coordinates
+          // X: normal (x0 at left, x9 at right)
+          const posX = (x - (gridSize.x - 1) / 2) * 2
+          // Y: inverted so y0 is at front, y9 is at back
+          const posZ = -((y - (gridSize.y - 1) / 2) * 2)
+          // Z: Level 1 at top, Level 16 at bottom (top to bottom)
+          const posY = (gridSize.z - 1 - z) * 2 + verticalOffset
+
+          // Find data for this position (level 1 = top, level 16 = bottom)
+          const dataItem = cubeData.find(item => item.level === z + 1)
           const isEmpty = !dataItem
 
-          // Set position
-          const posX = (x - (gridSize.x - 1) / 2) * 2
-          const posY = (gridSize.z - z) * 2
-          const posZ = ((gridSize.y - 1) / 2 - y) * 2
+          // Create cube geometry and material
+          const geometry = new THREE.BoxGeometry(1.8, 1.8, 1.8)
+          const material = new THREE.MeshLambertMaterial({
+            color: isEmpty ? 0x333333 : dataItem.color || 0x666666,
+            transparent: isEmpty,
+            opacity: isEmpty ? 0.3 : 1.0
+          })
 
-          matrix.setPosition(posX, posY, posZ)
-          mesh.setMatrixAt(instanceIndex, matrix)
+          const cube = new THREE.Mesh(geometry, material)
+          cube.position.set(posX, posY, posZ)
+          cube.castShadow = true
+          cube.receiveShadow = true
 
-          // Set color
-          if (isEmpty) {
-            color.setHex(0x333333) // Empty cell color
-          } else {
-            color.setStyle(dataItem.color)
-          }
-          mesh.setColorAt(instanceIndex, color)
-
-          // Store cell info
+          // Store cell info with corrected coordinates
           const cellInfo: CellInfo = {
             data: {
-              ...dataItem,
-              x,
-              y,
-              z,
-              level: z,
+              x: x,                   // Normal X coordinate (x0 at left, x9 at right)
+              y: y,                   // Normal Y coordinate (y0 at front, y9 at back)
+              z: z + 1,               // Level (1 = top, 16 = bottom)
+              level: z + 1,
               sku: dataItem?.sku || '',
               color: dataItem?.color || '#333333',
               empty: isEmpty,
-              position: `(${x},${y},${z})`
+              position: `(${x},${y},${z + 1})`
             },
             position: new THREE.Vector3(posX, posY, posZ),
             color: dataItem?.color || '#333333',
             isEmpty
           }
 
-          newCellDataMap.set(key, cellInfo)
-          instanceIndex++
+          cellDataRef.current.set(cube, cellInfo)
+          cubesRef.current.push(cube)
+          sceneRef.current.add(cube)
         }
       }
     }
+  }, [cubeData, gridSize])
 
-    // Update instance count
-    mesh.count = instanceIndex
+  // Add coordinate axes with labels
+  const addCoordinateAxes = useCallback(() => {
+    if (!sceneRef.current) return
+     const verticalOffset = - (gridSize.z * 2) / 2
+    // X-axis (left to right) - Red line - positioned at back beside the grid
+    const xAxisMaterial = new THREE.LineBasicMaterial({ color: '#ffffff', linewidth: 3 })
+    const xAxisGeometry = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(-(gridSize.x - 1), 0 + verticalOffset, (gridSize.y - 1) + 2),
+      new THREE.Vector3(gridSize.x - 1, 0 + verticalOffset, (gridSize.y - 1) + 2)
+    ])
+    const xAxisLine = new THREE.Line(xAxisGeometry, xAxisMaterial)
+    sceneRef.current.add(xAxisLine)
 
-    // Update matrices and colors
-    mesh.instanceMatrix.needsUpdate = true
-    if (mesh.instanceColor) {
-      mesh.instanceColor.needsUpdate = true
+    // Y-axis (front to back) - Blue line - positioned beside the grid
+    const yAxisMaterial = new THREE.LineBasicMaterial({ color: '#ffffff', linewidth: 3 })
+    const yAxisGeometry = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(-(gridSize.x - 1) - 2, 0 + verticalOffset, -(gridSize.y - 1)),
+      new THREE.Vector3(-(gridSize.x - 1) - 2, 0 + verticalOffset, gridSize.y - 1)
+    ])
+    const yAxisLine = new THREE.Line(yAxisGeometry, yAxisMaterial)
+    sceneRef.current.add(yAxisLine)
+
+    // Add X-axis labels (0, 1, 2, ... gridSize.x-1)
+    for (let x = 0; x < gridSize.x; x++) {
+      const posX = (x - (gridSize.x - 1) / 2) * 2
+      
+      // Create text label
+      const canvas = document.createElement('canvas')
+      const context = canvas.getContext('2d')
+      if (!context) continue
+      
+      canvas.width = 32
+      canvas.height = 32
+      context.font = '20px Arial'
+      context.fillStyle = '#ffffff'
+      context.textAlign = 'center'
+      context.fillText(`X${x}`, 16, 20)
+      
+      const texture = new THREE.CanvasTexture(canvas)
+      const material = new THREE.SpriteMaterial({ map: texture })
+      const sprite = new THREE.Sprite(material)
+      sprite.scale.set(1, 1, 1)
+      sprite.position.set(posX, 0 + verticalOffset, (gridSize.y - 1) + 3 )  // Position labels at back (opposite side)
+      
+      sceneRef.current.add(sprite)
     }
 
-    sceneRef.current.add(mesh)
-    setInstancedMesh(mesh)
-    setCellDataMap(newCellDataMap)
+    // Add Y-axis labels (0, 1, 2, ... gridSize.y-1)
+    for (let y = 0; y < gridSize.y; y++) {
+      const posZ = -((y - (gridSize.y - 1) / 2) * 2)
+      
+      // Create text label
+      const canvas = document.createElement('canvas')
+      const context = canvas.getContext('2d')
+      if (!context) continue
+      
+      canvas.width = 32
+      canvas.height = 32
+      context.font = '20px Arial'
+      context.fillStyle = '#ffffff'
+      context.textAlign = 'center'
+      context.fillText(`Y${y}`, 16, 20)
+      
+      const texture = new THREE.CanvasTexture(canvas)
+      const material = new THREE.SpriteMaterial({ map: texture })
+      const sprite = new THREE.Sprite(material)
+      sprite.scale.set(1, 1, 1)
+      sprite.position.set(-(gridSize.x - 1) - 3, 0 + verticalOffset , posZ)  // Position labels beside the grid
+      
+      sceneRef.current.add(sprite)
+    }
 
-    // Calculate warehouse level stats
-    const levelStats = calculateWarehouseLevelStats(cubeData)
-    setWarehouseLevelStats(levelStats)
-  }, [cubeData, gridSize, instancedMesh])
-
-  // Calculate warehouse level statistics
-  const calculateWarehouseLevelStats = useCallback((data: WarehouseItem[]): WarehouseLevelStat[] => {
-    const levelCounts: { [key: number]: Set<string> } = {}
-    const totalItems = data.length
-
-    data.forEach(item => {
-      if (!levelCounts[item.level]) {
-        levelCounts[item.level] = new Set()
-      }
-      levelCounts[item.level].add(item.sku)
-    })
-
-    return Object.entries(levelCounts).map(([level, skus]) => ({
-      level: parseInt(level),
-      uniqueSKUs: skus.size,
-      percentage: totalItems > 0 ? ((skus.size / totalItems) * 100).toFixed(1) : '0'
-    })).sort((a, b) => a.level - b.level)
-  }, [])
+    // Add Z-axis (depth/level) labels (1, 2, 3, ... gridSize.z) - from top to bottom
+    for (let z = 0; z < gridSize.z; z++) {
+      const posY = (gridSize.z - 1 - z) * 2  // Level 1 at top, Level 16 at bottom
+      
+      // Create text label
+      const canvas = document.createElement('canvas')
+      const context = canvas.getContext('2d')
+      if (!context) continue
+      
+      canvas.width = 32
+      canvas.height = 32
+      context.font = '20px Arial'
+      context.fillStyle = '#ffffff'
+      context.textAlign = 'center'
+      context.fillText(`${z + 1}`, 16, 20)  // Level 1, 2, 3, etc.
+      
+      const texture = new THREE.CanvasTexture(canvas)
+      const material = new THREE.SpriteMaterial({ map: texture })
+      const sprite = new THREE.Sprite(material)
+      sprite.scale.set(1, 1, 1)
+      sprite.position.set(-(gridSize.x - 1) - 3, posY + verticalOffset , (gridSize.y - 1) + 3)  // Position at back-left corner
+      
+      sceneRef.current.add(sprite)
+    }
+  }, [gridSize])
 
   // Mouse control handlers
   const addMouseControls = useCallback(() => {
@@ -283,19 +279,19 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
     const canvas = rendererRef.current.domElement
 
     const handleMouseDown = (event: MouseEvent) => {
-      setMouseControls(prev => ({
-        ...prev,
+      mouseControlsRef.current = {
+        ...mouseControlsRef.current,
         isMouseDown: true,
         mouseX: event.clientX,
         mouseY: event.clientY
-      }))
+      }
     }
 
     const handleMouseMove = (event: MouseEvent) => {
-      if (!mouseControls.isMouseDown || !cameraRef.current) return
+      if (!mouseControlsRef.current.isMouseDown || !cameraRef.current) return
 
-      const deltaX = event.clientX - mouseControls.mouseX
-      const deltaY = event.clientY - mouseControls.mouseY
+      const deltaX = event.clientX - mouseControlsRef.current.mouseX
+      const deltaY = event.clientY - mouseControlsRef.current.mouseY
 
       // Spherical camera rotation
       const spherical = new THREE.Spherical()
@@ -305,20 +301,20 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
       spherical.phi = Math.max(0.1, Math.min(Math.PI - 0.1, spherical.phi))
 
       cameraRef.current.position.setFromSpherical(spherical)
-      cameraRef.current.lookAt(0, 8, 0)
+      cameraRef.current.lookAt(0, 0, 0)
 
-      setMouseControls(prev => ({
-        ...prev,
+      mouseControlsRef.current = {
+        ...mouseControlsRef.current,
         mouseX: event.clientX,
         mouseY: event.clientY
-      }))
+      }
     }
 
     const handleMouseUp = () => {
-      setMouseControls(prev => ({
-        ...prev,
+      mouseControlsRef.current = {
+        ...mouseControlsRef.current,
         isMouseDown: false
-      }))
+      }
     }
 
     const handleWheel = (event: WheelEvent) => {
@@ -326,21 +322,39 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
       if (!cameraRef.current) return
 
       const now = Date.now()
-      if (now - mouseControls.lastWheelTime < 50) return
+      if (now - mouseControlsRef.current.lastWheelTime < 50) return
 
-      setMouseControls(prev => ({
-        ...prev,
+      mouseControlsRef.current = {
+        ...mouseControlsRef.current,
         lastWheelTime: now
-      }))
+      }
 
       const scale = event.deltaY > 0 ? 1.1 : 0.9
       cameraRef.current.position.multiplyScalar(scale)
-      cameraRef.current.position.clampLength(10, 100)
+      cameraRef.current.position.clampLength(5, 100)
     }
 
     const handleClick = (event: MouseEvent) => {
-      // Handle cell selection
-      handleCellSelection(event)
+      if (!cameraRef.current || !rendererRef.current) return
+
+      const canvas = rendererRef.current.domElement
+      const rect = canvas.getBoundingClientRect()
+      const mouse = new THREE.Vector2(
+        ((event.clientX - rect.left) / rect.width) * 2 - 1,
+        -((event.clientY - rect.top) / rect.height) * 2 + 1
+      )
+
+      const raycaster = new THREE.Raycaster()
+      raycaster.setFromCamera(mouse, cameraRef.current)
+
+      const intersects = raycaster.intersectObjects(cubesRef.current)
+      if (intersects.length > 0) {
+        const intersectedCube = intersects[0].object as THREE.Mesh
+        const cellInfo = cellDataRef.current.get(intersectedCube)
+        if (cellInfo) {
+          setSelectedCell(cellInfo)
+        }
+      }
     }
 
     canvas.addEventListener('mousedown', handleMouseDown)
@@ -356,38 +370,11 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
       canvas.removeEventListener('wheel', handleWheel)
       canvas.removeEventListener('click', handleClick)
     }
-  }, [mouseControls])
+  }, [])
 
   const removeMouseControls = useCallback(() => {
     // Mouse controls cleanup is handled by the return function in addMouseControls
   }, [])
-
-  // Handle cell selection with raycasting
-  const handleCellSelection = useCallback((event: MouseEvent) => {
-    if (!cameraRef.current || !instancedMesh || !rendererRef.current) return
-
-    const canvas = rendererRef.current.domElement
-    const rect = canvas.getBoundingClientRect()
-    const mouse = new THREE.Vector2(
-      ((event.clientX - rect.left) / rect.width) * 2 - 1,
-      -((event.clientY - rect.top) / rect.height) * 2 + 1
-    )
-
-    const raycaster = new THREE.Raycaster()
-    raycaster.setFromCamera(mouse, cameraRef.current)
-
-    const intersects = raycaster.intersectObject(instancedMesh)
-    if (intersects.length > 0) {
-      const instanceId = intersects[0].instanceId
-      if (instanceId !== undefined) {
-        // Find the cell info for this instance
-        const cellInfoArray = Array.from(cellDataMap.values())
-        if (cellInfoArray[instanceId]) {
-          setSelectedLevel(cellInfoArray[instanceId])
-        }
-      }
-    }
-  }, [instancedMesh, cellDataMap])
 
   // Animation loop
   const animate = useCallback(() => {
@@ -412,16 +399,12 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
     animationIdRef.current = requestAnimationFrame(animate)
   }, [])
 
-  // Reset camera to optimal position
+  // Reset camera view
   const resetCameraView = useCallback(() => {
     if (!cameraRef.current) return
 
-    const optimalPosition = calculateOptimalCameraPosition()
-    const targetPosition = new THREE.Vector3(
-      optimalPosition.x,
-      optimalPosition.y,
-      optimalPosition.z
-    )
+    const distance = Math.max(gridSize.x, gridSize.y, gridSize.z) * 3
+    const targetPosition = new THREE.Vector3(distance, distance, distance)
 
     // Create smooth transition
     const startPosition = cameraRef.current.position.clone()
@@ -449,7 +432,7 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
     }
 
     requestAnimationFrame(animateCamera)
-  }, [calculateOptimalCameraPosition])
+  }, [gridSize])
 
   // Fullscreen functionality
   const openFullscreen = useCallback(() => {
@@ -467,7 +450,7 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
 
     // Resize for fullscreen
     const width = window.innerWidth
-    const height = window.innerHeight - 64 // Account for toolbar
+    const height = window.innerHeight - 64
 
     if (cameraRef.current) {
       cameraRef.current.aspect = width / height
@@ -497,89 +480,6 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
     setFullscreenDialog(false)
   }, [])
 
-  // Axis view functionality
-  const showXAxisCells = useCallback(() => {
-    if (!selectedLevel) return
-
-    setViewMode('x-axis')
-    setAxisCells([])
-    setColumnCells([])
-
-    const selectedX = selectedLevel.data.x
-    const selectedY = selectedLevel.data.y
-    const selectedZ = selectedLevel.data.z
-
-    const axisCellsData: CellInfo[] = []
-    const columnCellsData: CellInfo[] = []
-
-    // Show all cells along the X-axis
-    for (let x = 0; x < gridSize.x; x++) {
-      const key = `${x},${selectedY},${selectedZ}`
-      const cellInfo = cellDataMap.get(key)
-      if (cellInfo) {
-        axisCellsData.push(cellInfo)
-      }
-    }
-
-    // Show vertical column through Z levels
-    for (let z = 1; z <= gridSize.z; z++) {
-      if (z !== selectedZ) {
-        const key = `${selectedX},${selectedY},${z}`
-        const cellInfo = cellDataMap.get(key)
-        if (cellInfo) {
-          columnCellsData.push(cellInfo)
-        }
-      }
-    }
-
-    setAxisCells(axisCellsData)
-    setColumnCells(columnCellsData)
-  }, [selectedLevel, gridSize, cellDataMap])
-
-  const showYAxisCells = useCallback(() => {
-    if (!selectedLevel) return
-
-    setViewMode('y-axis')
-    setAxisCells([])
-    setColumnCells([])
-
-    const selectedX = selectedLevel.data.x
-    const selectedY = selectedLevel.data.y
-    const selectedZ = selectedLevel.data.z
-
-    const axisCellsData: CellInfo[] = []
-    const columnCellsData: CellInfo[] = []
-
-    // Show all cells along the Y-axis
-    for (let y = 0; y < gridSize.y; y++) {
-      const key = `${selectedX},${y},${selectedZ}`
-      const cellInfo = cellDataMap.get(key)
-      if (cellInfo) {
-        axisCellsData.push(cellInfo)
-      }
-    }
-
-    // Show vertical column through Z levels
-    for (let z = 1; z <= gridSize.z; z++) {
-      if (z !== selectedZ) {
-        const key = `${selectedX},${selectedY},${z}`
-        const cellInfo = cellDataMap.get(key)
-        if (cellInfo) {
-          columnCellsData.push(cellInfo)
-        }
-      }
-    }
-
-    setAxisCells(axisCellsData)
-    setColumnCells(columnCellsData)
-  }, [selectedLevel, gridSize, cellDataMap])
-
-  const resetAxisView = useCallback(() => {
-    setViewMode('normal')
-    setAxisCells([])
-    setColumnCells([])
-  }, [])
-
   // Effects
   useEffect(() => {
     const cleanup = initThreeJS()
@@ -587,8 +487,8 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
   }, [initThreeJS])
 
   useEffect(() => {
-    createWarehouseCubes()
-  }, [createWarehouseCubes])
+    createCubes()
+  }, [createCubes])
 
   useEffect(() => {
     if (fullscreenDialog) {
@@ -616,35 +516,12 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
   return (
     <div className="warehouse-cube-container">
       <div className="threejs-wrapper">
-        <div ref={containerRef} className="threejs-container h-96 bg-dark-700 rounded-lg relative">
-          {/* Summary Statistics Overlay - Top Left */}
-          {warehouseLevelStats.length > 0 && (
-            <div className="absolute top-4 left-4 bg-dark-800/90 backdrop-blur-sm border border-dark-600 rounded-lg p-3 max-w-xs">
-              <div className="text-sm font-medium text-white mb-2">SKU Distribution</div>
-              <div className="space-y-1">
-                <div className="flex justify-between text-xs">
-                  <span className="text-dark-300">Total SKUs:</span>
-                  <span className="text-white">{cubeData.length}</span>
-                </div>
-                <div className="flex justify-between text-xs">
-                  <span className="text-dark-300">Total Levels:</span>
-                  <span className="text-white">{warehouseLevelStats.length}</span>
-                </div>
-              </div>
-              <div className="mt-2 max-h-24 overflow-y-auto">
-                {warehouseLevelStats.slice(0, 5).map(stat => (
-                  <div key={stat.level} className="flex justify-between text-xs text-dark-300">
-                    <span>Z{stat.level}:</span>
-                    <span>{stat.uniqueSKUs} ({stat.percentage}%)</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+        {/* <div ref={containerRef} className="threejs-container h-96 bg-dark-700 rounded-lg relative overflow-hidden"> */}
+        <div ref={containerRef} className="threejs-container h-[80vh] bg-dark-700 rounded-lg relative overflow-hidden">
 
-          {/* Camera Position Display - Bottom Left (Regular View Only) */}
+          {/* Camera Position Display - Bottom Left */}
           {!fullscreenDialog && (
-            <div className="absolute bottom-4 left-4 bg-dark-800/90 backdrop-blur-sm border border-dark-600 rounded-lg p-3 min-w-[140px]">
+            <div className="absolute bottom-4 left-4 bg-dark-800/90 backdrop-blur-sm border border-dark-600 rounded-lg p-3 min-w-[140px] z-10 pointer-events-none">
               <div className="text-xs font-medium text-white mb-2">Camera Position</div>
               <div className="space-y-1">
                 <div className="flex justify-between text-xs">
@@ -664,12 +541,12 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
           )}
 
           {/* Cell Details Overlay - Top Right */}
-          {selectedLevel && (
-            <div className="absolute top-4 right-4 bg-dark-800/90 backdrop-blur-sm border border-dark-600 rounded-lg p-3 min-w-[200px]">
+          {selectedCell && (
+            <div className="absolute top-4 right-4 bg-dark-800/90 backdrop-blur-sm border border-dark-600 rounded-lg p-3 min-w-[200px] z-10 pointer-events-auto">
               <div className="flex justify-between items-center mb-2">
                 <div className="text-sm font-medium text-white">Cell Details</div>
                 <button
-                  onClick={() => setSelectedLevel(null)}
+                  onClick={() => setSelectedCell(null)}
                   className="text-dark-400 hover:text-white p-1"
                 >
                   <X className="w-4 h-4" />
@@ -678,123 +555,39 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
               <div className="space-y-1">
                 <div className="flex justify-between text-xs">
                   <span className="text-dark-300">Position:</span>
-                  <span className="text-white font-mono">{selectedLevel.data.position}</span>
+                  <span className="text-white font-mono">{selectedCell.data.position}</span>
                 </div>
                 <div className="flex justify-between text-xs">
                   <span className="text-dark-300">Level:</span>
-                  <span className="text-white">{selectedLevel.data.level}</span>
+                  <span className="text-white">{selectedCell.data.level}</span>
                 </div>
-                {!selectedLevel.data.empty ? (
+                {!selectedCell.isEmpty ? (
                   <div className="flex justify-between text-xs">
                     <span className="text-dark-300">SKU:</span>
-                    <span className="text-white">{selectedLevel.data.sku}</span>
+                    <span className="text-white">{selectedCell.data.sku}</span>
                   </div>
                 ) : (
                   <div className="flex justify-between text-xs">
                     <span className="text-dark-300">Status:</span>
-                    <span className="text-dark-400">Empty</span>
+                    <span className="text-orange-400">Empty</span>
                   </div>
                 )}
-                {selectedLevel.data.color && (
+                {selectedCell.color && selectedCell.color !== '#333333' && (
                   <div className="flex justify-between text-xs items-center">
                     <span className="text-dark-300">Color:</span>
                     <div className="flex items-center space-x-1">
                       <div 
                         className="w-3 h-3 rounded-sm border border-dark-500"
-                        style={{ backgroundColor: selectedLevel.data.color }}
+                        style={{ backgroundColor: selectedCell.color }}
                       />
-                      <span className="text-white">{selectedLevel.data.color}</span>
+                      <span className="text-white">{selectedCell.color}</span>
                     </div>
                   </div>
                 )}
               </div>
-              <div className="mt-3 space-y-1">
-                <button
-                  onClick={showXAxisCells}
-                  className="w-full flex items-center justify-center space-x-2 px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs"
-                >
-                  <ArrowLeftRight className="w-3 h-3" />
-                  <span>X-Row</span>
-                </button>
-                <button
-                  onClick={showYAxisCells}
-                  className="w-full flex items-center justify-center space-x-2 px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs"
-                >
-                  <ArrowUpDown className="w-3 h-3" />
-                  <span>Y-Column</span>
-                </button>
-                <button
-                  onClick={resetAxisView}
-                  disabled={viewMode === 'normal'}
-                  className="w-full flex items-center justify-center space-x-2 px-2 py-1 bg-gray-600 hover:bg-gray-700 disabled:bg-gray-600/50 text-white rounded text-xs"
-                >
-                  <Eye className="w-3 h-3" />
-                  <span>Normal</span>
-                </button>
-              </div>
             </div>
           )}
 
-          {/* Organized Cell Lists for X/Y Axis Views */}
-          {viewMode !== 'normal' && (axisCells.length > 0 || columnCells.length > 0) && (
-            <div className="absolute bottom-4 right-4 bg-dark-800/90 backdrop-blur-sm border border-dark-600 rounded-lg p-3 max-w-sm max-h-64 overflow-y-auto">
-              {/* Axis Cells Section */}
-              {axisCells.length > 0 && (
-                <div className="mb-3">
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="text-sm font-medium text-primary-400">
-                      {viewMode === 'x-axis' ? 'X-Row' : 'Y-Column'} Cells
-                    </span>
-                    <span className="text-xs text-primary-400 bg-primary-400/20 px-2 py-1 rounded">
-                      {axisCells.length}
-                    </span>
-                  </div>
-                  <div className="space-y-1">
-                    {axisCells.slice(0, 3).map((cell, index) => (
-                      <div key={index} className="flex justify-between text-xs border-l-2 border-blue-500 pl-2">
-                        <span className="text-dark-300">{cell.data.position}</span>
-                        <span className="text-white">
-                          {cell.data.empty ? 'Empty' : cell.data.sku}
-                        </span>
-                      </div>
-                    ))}
-                    {axisCells.length > 3 && (
-                      <div className="text-xs text-dark-400 text-center">
-                        +{axisCells.length - 3} more
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Column Cells Section */}
-              {columnCells.length > 0 && (
-                <div>
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="text-sm font-medium text-cyan-400">Z-Column Cells</span>
-                    <span className="text-xs text-cyan-400 bg-cyan-400/20 px-2 py-1 rounded">
-                      {columnCells.length}
-                    </span>
-                  </div>
-                  <div className="space-y-1">
-                    {columnCells.slice(0, 3).map((cell, index) => (
-                      <div key={index} className="flex justify-between text-xs border-l-2 border-cyan-500 pl-2">
-                        <span className="text-dark-300">{cell.data.position}</span>
-                        <span className="text-white">
-                          {cell.data.empty ? 'Empty' : cell.data.sku}
-                        </span>
-                      </div>
-                    ))}
-                    {columnCells.length > 3 && (
-                      <div className="text-xs text-dark-400 text-center">
-                        +{columnCells.length - 3} more
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
         </div>
       </div>
 
@@ -824,7 +617,7 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
       {fullscreenDialog && (
         <div className="fixed inset-0 bg-black z-50 flex flex-col">
           <div className="flex items-center justify-between p-4 bg-dark-800 border-b border-dark-700">
-            <h2 className="text-lg font-semibold text-white">3D Warehouse SKU Visualization - Fullscreen</h2>
+            <h2 className="text-lg font-semibold text-white">3D Warehouse Visualization - Fullscreen</h2>
             <button
               onClick={closeFullscreen}
               className="text-dark-400 hover:text-white p-2"
@@ -834,38 +627,14 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
           </div>
           <div className="flex-1 relative">
             <div ref={fullscreenContainerRef} className="w-full h-full bg-dark-700">
-              {/* Summary Statistics Overlay - Top Left in Fullscreen */}
-              {warehouseLevelStats.length > 0 && (
-                <div className="absolute top-4 left-4 bg-dark-800/90 backdrop-blur-sm border border-dark-600 rounded-lg p-3 max-w-xs">
-                  <div className="text-sm font-medium text-white mb-2">SKU Distribution</div>
-                  <div className="space-y-1">
-                    <div className="flex justify-between text-xs">
-                      <span className="text-dark-300">Total SKUs:</span>
-                      <span className="text-white">{cubeData.length}</span>
-                    </div>
-                    <div className="flex justify-between text-xs">
-                      <span className="text-dark-300">Total Levels:</span>
-                      <span className="text-white">{warehouseLevelStats.length}</span>
-                    </div>
-                  </div>
-                  <div className="mt-2 max-h-24 overflow-y-auto">
-                    {warehouseLevelStats.slice(0, 5).map(stat => (
-                      <div key={stat.level} className="flex justify-between text-xs text-dark-300">
-                        <span>Z{stat.level}:</span>
-                        <span>{stat.uniqueSKUs} ({stat.percentage}%)</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Cell Details Overlay - Top Right in Fullscreen */}
-              {selectedLevel && (
+              
+              {/* Cell Details in Fullscreen */}
+              {selectedCell && (
                 <div className="absolute top-4 right-4 bg-dark-800/90 backdrop-blur-sm border border-dark-600 rounded-lg p-3 min-w-[200px]">
                   <div className="flex justify-between items-center mb-2">
                     <div className="text-sm font-medium text-white">Cell Details</div>
                     <button
-                      onClick={() => setSelectedLevel(null)}
+                      onClick={() => setSelectedCell(null)}
                       className="text-dark-400 hover:text-white p-1"
                     >
                       <X className="w-4 h-4" />
@@ -874,144 +643,58 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
                   <div className="space-y-1">
                     <div className="flex justify-between text-xs">
                       <span className="text-dark-300">Position:</span>
-                      <span className="text-white font-mono">{selectedLevel.data.position}</span>
+                      <span className="text-white font-mono">{selectedCell.data.position}</span>
                     </div>
                     <div className="flex justify-between text-xs">
                       <span className="text-dark-300">Level:</span>
-                      <span className="text-white">{selectedLevel.data.level}</span>
+                      <span className="text-white">{selectedCell.data.level}</span>
                     </div>
-                    {!selectedLevel.data.empty ? (
+                    {!selectedCell.isEmpty ? (
                       <div className="flex justify-between text-xs">
                         <span className="text-dark-300">SKU:</span>
-                        <span className="text-white">{selectedLevel.data.sku}</span>
+                        <span className="text-white">{selectedCell.data.sku}</span>
                       </div>
                     ) : (
                       <div className="flex justify-between text-xs">
                         <span className="text-dark-300">Status:</span>
-                        <span className="text-dark-400">Empty</span>
+                        <span className="text-orange-400">Empty</span>
                       </div>
                     )}
-                    {selectedLevel.data.color && (
+                    {selectedCell.color && selectedCell.color !== '#333333' && (
                       <div className="flex justify-between text-xs items-center">
                         <span className="text-dark-300">Color:</span>
                         <div className="flex items-center space-x-1">
                           <div 
                             className="w-3 h-3 rounded-sm border border-dark-500"
-                            style={{ backgroundColor: selectedLevel.data.color }}
+                            style={{ backgroundColor: selectedCell.color }}
                           />
-                          <span className="text-white">{selectedLevel.data.color}</span>
+                          <span className="text-white">{selectedCell.color}</span>
                         </div>
                       </div>
                     )}
                   </div>
-                  <div className="mt-3 space-y-1">
-                    <button
-                      onClick={showXAxisCells}
-                      className="w-full flex items-center justify-center space-x-2 px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs"
-                    >
-                      <ArrowLeftRight className="w-3 h-3" />
-                      <span>X-Row</span>
-                    </button>
-                    <button
-                      onClick={showYAxisCells}
-                      className="w-full flex items-center justify-center space-x-2 px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs"
-                    >
-                      <ArrowUpDown className="w-3 h-3" />
-                      <span>Y-Column</span>
-                    </button>
-                    <button
-                      onClick={resetAxisView}
-                      disabled={viewMode === 'normal'}
-                      className="w-full flex items-center justify-center space-x-2 px-2 py-1 bg-gray-600 hover:bg-gray-700 disabled:bg-gray-600/50 text-white rounded text-xs"
-                    >
-                      <Eye className="w-3 h-3" />
-                      <span>Normal</span>
-                    </button>
+                </div>
+              )}
+
+              {/* Camera Position in Fullscreen */}
+              <div className="absolute bottom-4 left-4 bg-dark-800/90 backdrop-blur-sm border border-dark-600 rounded-lg p-3 min-w-[140px]">
+                <div className="text-xs font-medium text-white mb-2">Camera Position</div>
+                <div className="space-y-1">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-dark-300">X:</span>
+                    <span className="text-white font-mono">{cameraPosition.x}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-dark-300">Y:</span>
+                    <span className="text-white font-mono">{cameraPosition.y}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-dark-300">Z:</span>
+                    <span className="text-white font-mono">{cameraPosition.z}</span>
                   </div>
                 </div>
-              )}
-
-              {/* Organized Cell Lists for X/Y Axis Views in Fullscreen */}
-              {viewMode !== 'normal' && (axisCells.length > 0 || columnCells.length > 0) && (
-                <div className="absolute bottom-4 right-4 bg-dark-800/90 backdrop-blur-sm border border-dark-600 rounded-lg p-3 max-w-sm max-h-64 overflow-y-auto">
-                  {/* Axis Cells Section */}
-                  {axisCells.length > 0 && (
-                    <div className="mb-3">
-                      <div className="flex justify-between items-center mb-2">
-                        <span className="text-sm font-medium text-primary-400">
-                          {viewMode === 'x-axis' ? 'X-Row' : 'Y-Column'} Cells
-                        </span>
-                        <span className="text-xs text-primary-400 bg-primary-400/20 px-2 py-1 rounded">
-                          {axisCells.length}
-                        </span>
-                      </div>
-                      <div className="space-y-1">
-                        {axisCells.slice(0, 3).map((cell, index) => (
-                          <div key={index} className="flex justify-between text-xs border-l-2 border-blue-500 pl-2">
-                            <span className="text-dark-300">{cell.data.position}</span>
-                            <span className="text-white">
-                              {cell.data.empty ? 'Empty' : cell.data.sku}
-                            </span>
-                          </div>
-                        ))}
-                        {axisCells.length > 3 && (
-                          <div className="text-xs text-dark-400 text-center">
-                            +{axisCells.length - 3} more
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Column Cells Section */}
-                  {columnCells.length > 0 && (
-                    <div>
-                      <div className="flex justify-between items-center mb-2">
-                        <span className="text-sm font-medium text-cyan-400">Z-Column Cells</span>
-                        <span className="text-xs text-cyan-400 bg-cyan-400/20 px-2 py-1 rounded">
-                          {columnCells.length}
-                        </span>
-                      </div>
-                      <div className="space-y-1">
-                        {columnCells.slice(0, 3).map((cell, index) => (
-                          <div key={index} className="flex justify-between text-xs border-l-2 border-cyan-500 pl-2">
-                            <span className="text-dark-300">{cell.data.position}</span>
-                            <span className="text-white">
-                              {cell.data.empty ? 'Empty' : cell.data.sku}
-                            </span>
-                          </div>
-                        ))}
-                        {columnCells.length > 3 && (
-                          <div className="text-xs text-dark-400 text-center">
-                            +{columnCells.length - 3} more
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Camera Position Display in Fullscreen - Bottom Left (Fullscreen View Only) */}
-              {fullscreenDialog && (
-                <div className="absolute bottom-4 left-4 bg-dark-800/90 backdrop-blur-sm border border-dark-600 rounded-lg p-3 min-w-[140px]">
-                  <div className="text-xs font-medium text-white mb-2">Camera Position</div>
-                  <div className="space-y-1">
-                    <div className="flex justify-between text-xs">
-                      <span className="text-dark-300">X:</span>
-                      <span className="text-white font-mono">{cameraPosition.x}</span>
-                    </div>
-                    <div className="flex justify-between text-xs">
-                      <span className="text-dark-300">Y:</span>
-                      <span className="text-white font-mono">{cameraPosition.y}</span>
-                    </div>
-                    <div className="flex justify-between text-xs">
-                      <span className="text-dark-300">Z:</span>
-                      <span className="text-white font-mono">{cameraPosition.z}</span>
-                    </div>
-                  </div>
-                </div>
-              )}
+              </div>
+              
             </div>
           </div>
         </div>

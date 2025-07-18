@@ -1,9 +1,9 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
-import { RefreshCw, Info, Cube, BarChart3, PieChart } from 'lucide-react'
+import { RefreshCw, Info, Box, BarChart3, PieChart } from 'lucide-react'
 import Warehouse3DCube from './Warehouse3DCube'
-import { WarehouseItem, GridSize, SkuDistribution } from '@/types/warehouse'
+import { WarehouseItem, GridSize, SkuDistribution } from '../types/warehouse'
 
 const Warehouse3DMain = () => {
   // State management
@@ -19,13 +19,13 @@ const Warehouse3DMain = () => {
 
   // Sample data for demonstration
   const warehouseSampleData: WarehouseItem[] = [
-    { level: 1, sku: 'SKU-3821', color: 'red' },
-    { level: 1, sku: 'SKU-7462', color: 'red' },
-    { level: 2, sku: 'SKU-1938', color: 'red' },
-    { level: 3, sku: 'SKU-5287', color: 'red' },
-    { level: 4, sku: 'SKU-6173', color: 'purple' },
-    { level: 5, sku: 'SKU-2946', color: 'purple' },
-    { level: 6, sku: 'SKU-9841', color: 'purple' },
+    { level: 1, sku: 'SKU-3821', color: 'orange' },
+    { level: 1, sku: 'SKU-7462', color: 'orange' },
+    { level: 2, sku: 'SKU-1938', color: 'yellow' },
+    { level: 3, sku: 'SKU-5287', color: 'yellow' },
+    { level: 4, sku: 'SKU-6173', color: 'yellow' },
+    { level: 5, sku: 'SKU-2946', color: 'teal' },
+    { level: 6, sku: 'SKU-9841', color: 'teal' },
     { level: 7, sku: 'SKU-7634', color: 'purple' },
     { level: 8, sku: 'SKU-3152', color: 'brown' },
     { level: 9, sku: 'SKU-8409', color: 'brown' },
@@ -51,13 +51,7 @@ const Warehouse3DMain = () => {
     "sku": "SKU-0002",
     "color": "blue"
   }
-]
-
-Grid coordinates:
-- X: 0 to ${warehouseGridSize.x - 1}
-- Y: 0 to ${warehouseGridSize.y - 1}  
-- Z: 1 to ${warehouseGridSize.z}
-- Level: 1 to ${warehouseGridSize.z} (0 is robot level at top)`, [warehouseGridSize])
+] `, [warehouseGridSize])
 
   const warehouseSkuDistribution = useMemo(() => {
     const skuCounts: { [key: string]: number } = {}
@@ -147,7 +141,7 @@ Grid coordinates:
         <div className="p-6 border-b border-dark-700">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
-              <Cube className="w-6 h-6 text-primary-500" />
+              <Box className="w-6 h-6 text-primary-500" />
               <div>
                 <h2 className="text-xl font-semibold text-white">3D Warehouse Visualization</h2>
                 <p className="text-dark-400 text-sm mt-1">
@@ -253,7 +247,7 @@ Grid coordinates:
           </div>
 
           {/* 3D Visualization */}
-          <div className="min-h-[600px]">
+          <div className="h-[90vh]">
             {warehouseCubeData.length > 0 ? (
               <Warehouse3DCube 
                 cubeData={warehouseCubeData} 
@@ -261,7 +255,7 @@ Grid coordinates:
               />
             ) : (
               <div className="flex flex-col items-center justify-center h-96 bg-dark-700 rounded-lg">
-                <Cube className="w-16 h-16 text-dark-500 mb-4" />
+                <Box className="w-16 h-16 text-dark-500 mb-4" />
                 <div className="text-xl font-medium text-white mb-2">No warehouse data loaded</div>
                 <div className="text-dark-400 text-center">
                   Load sample data or enter your own JSON data to view the 3D visualization

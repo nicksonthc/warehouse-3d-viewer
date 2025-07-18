@@ -1,8 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import Warehouse3DMain from '@/components/Warehouse3DMain'
-import { Cube, Info, Github, ExternalLink } from 'lucide-react'
+import Warehouse3DMain from '../components/Warehouse3DMain'
+import { Box, Info, Github, ExternalLink } from 'lucide-react'
 
 export default function HomePage() {
   return (
@@ -13,7 +13,7 @@ export default function HomePage() {
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
               <div className="flex items-center justify-center w-12 h-12 bg-gradient-to-br from-primary-500 to-primary-600 rounded-xl">
-                <Cube className="w-6 h-6 text-white" />
+                <Box className="w-6 h-6 text-white" />
               </div>
               <div>
                 <h1 className="text-2xl font-bold text-white">Warehouse 3D Viewer</h1>

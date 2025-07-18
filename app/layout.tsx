@@ -8,8 +8,7 @@ export const metadata: Metadata = {
   title: 'Warehouse 3D Viewer',
   description: 'Interactive 3D warehouse SKU visualization tool',
   keywords: ['warehouse', '3D', 'visualization', 'SKU', 'inventory'],
-  authors: [{ name: 'Warehouse 3D Team' }],
-  viewport: 'width=device-width, initial-scale=1',
+  authors: [{ name: 'Warehouse 3D Team' }]
 }
 
 export default function RootLayout({

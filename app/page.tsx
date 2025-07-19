@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import Warehouse3DMain from '../components/Warehouse3DMain'
 import { Box, Info, Github, ExternalLink } from 'lucide-react'
+import Link from 'next/link'
 
 export default function HomePage() {
   return (
@@ -21,15 +22,15 @@ export default function HomePage() {
               </div>
             </div>
             <div className="flex items-center space-x-4">
-              <a
-                href="#about"
+              <Link
+                href="/about"
                 className="flex items-center space-x-2 px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg transition-colors"
               >
                 <Info className="w-4 h-4" />
-                <span>About</span>
-              </a>
+                <span>Don't Click Me</span>
+              </Link>
               <a
-                href="https://github.com/warehouse-3d-viewer"
+                href="https://github.com/nicksonthc/warehouse-3d-viewer"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center space-x-2 px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg transition-colors"

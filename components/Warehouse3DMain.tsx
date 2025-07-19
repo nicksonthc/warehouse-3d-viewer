@@ -223,7 +223,7 @@ const Warehouse3DMain = () => {
                         <input
                           type="number"
                           min="1"
-                          max="20"
+                          max="100"
                           value={warehouseGridSize.x}
                           onChange={(e) =>
                             handleGridSizeChange("x", parseInt(e.target.value))
@@ -238,7 +238,7 @@ const Warehouse3DMain = () => {
                         <input
                           type="number"
                           min="1"
-                          max="20"
+                          max="100"
                           value={warehouseGridSize.y}
                           onChange={(e) =>
                             handleGridSizeChange("y", parseInt(e.target.value))
@@ -253,7 +253,7 @@ const Warehouse3DMain = () => {
                         <input
                           type="number"
                           min="1"
-                          max="30"
+                          max="50"
                           value={warehouseGridSize.z}
                           onChange={(e) =>
                             handleGridSizeChange("z", parseInt(e.target.value))

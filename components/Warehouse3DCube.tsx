@@ -87,13 +87,16 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
     }
   }, [cubeData, gridSize.z])
 
-  // Store cube meshes for raycasting
-  const cubesRef = useRef<THREE.Mesh[]>([])
-  const cellDataRef = useRef<Map<THREE.Mesh, CellInfo>>(new Map())
+  // Store instanced mesh and cell data for raycasting
+  const instancedMeshRef = useRef<THREE.InstancedMesh | null>(null)
+  const cellDataRef = useRef<CellInfo[]>([])
   const highlightMeshesRef = useRef<THREE.Mesh[]>([])
   const selectedCellHighlightRef = useRef<THREE.Group | null>(null)
   const animationTimeRef = useRef<number>(0)
   const mouseControlsCleanupRef = useRef<(() => void) | null>(null)
+  const instanceMatrixRef = useRef<THREE.Matrix4[]>([])
+  const instanceColorRef = useRef<THREE.Color[]>([])
+  const dummy = useRef(new THREE.Object3D())
 
   // Mouse controls
   const mouseControlsRef = useRef({
@@ -120,9 +123,8 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
       1000
     )
     
-    // Position camera to view the grid
-    const distance = Math.max(gridSize.x, gridSize.y, gridSize.z) * 3
-    camera.position.set(distance, distance, distance)
+    // Position camera to specific coordinates
+    camera.position.set(-30, -10, 35)
     camera.lookAt(0, 0, 0)
     cameraRef.current = camera
 
@@ -148,7 +150,7 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
     currentContainerRef.current = containerRef.current
 
     // Add lighting
-    const ambientLight = new THREE.AmbientLight(0x404040, 0.8)
+    const ambientLight = new THREE.AmbientLight(0x404040, 3)
     scene.add(ambientLight)
 
     const directionalLight = new THREE.DirectionalLight(0xffffff, 1)
@@ -173,14 +175,16 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
     }
   }, [gridSize])
 
-  // Create warehouse cubes
+  // Create warehouse cubes using InstancedMesh
   const createCubes = useCallback(() => {
     if (!sceneRef.current) return
 
-    // Clear existing cubes and highlights
-    cubesRef.current.forEach(cube => {
-      sceneRef.current?.remove(cube)
-    })
+    // Clear existing instanced mesh and highlights
+    if (instancedMeshRef.current) {
+      sceneRef.current.remove(instancedMeshRef.current)
+      instancedMeshRef.current.dispose()
+      instancedMeshRef.current = null
+    }
     highlightMeshesRef.current.forEach(mesh => {
       sceneRef.current?.remove(mesh)
     })
@@ -188,47 +192,70 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
       sceneRef.current?.remove(selectedCellHighlightRef.current)
       selectedCellHighlightRef.current = null
     }
-    cubesRef.current = []
-    cellDataRef.current.clear()
+    cellDataRef.current = []
     highlightMeshesRef.current = []
+    instanceMatrixRef.current = []
+    instanceColorRef.current = []
 
-    const verticalOffset = - (gridSize.z * 2) / 2
+    const totalCubes = gridSize.x * gridSize.y * gridSize.z
+    const verticalOffset = - (gridSize.z * 2.6) / 2
 
-    // Create cubes for each grid position
+    // Create shared geometry and material for InstancedMesh
+    const geometry = new THREE.BoxGeometry(1.2, 1.2, 1.8)
+    const material = new THREE.MeshLambertMaterial({
+      transparent: false, // Start as completely opaque/solid
+      opacity: 1.0
+    })
+
+    // Create InstancedMesh
+    const instancedMesh = new THREE.InstancedMesh(geometry, material, totalCubes)
+    instancedMesh.castShadow = true
+    instancedMesh.receiveShadow = true
+    instancedMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+    
+    // Initialize instance colors properly
+    const colors = new Float32Array(totalCubes * 3)
+    for (let i = 0; i < totalCubes; i++) {
+      colors[i * 3] = 1     // R
+      colors[i * 3 + 1] = 1 // G  
+      colors[i * 3 + 2] = 1 // B
+    }
+    instancedMesh.instanceColor = new THREE.InstancedBufferAttribute(colors, 3)
+    instancedMesh.instanceColor.setUsage(THREE.DynamicDrawUsage)
+
+    let instanceIndex = 0
+
+    // Create instances for each grid position
     for (let x = 0; x < gridSize.x; x++) {
       for (let y = 0; y < gridSize.y; y++) {
         for (let z = 0; z < gridSize.z; z++) {
-          // Position cube with corrected coordinates
-          // X: normal (x0 at left, x9 at right)
-          const posX = (x - (gridSize.x - 1) / 2) * 2
-          // Y: inverted so y0 is at front, y9 is at back
-          const posZ = -((y - (gridSize.y - 1) / 2) * 2)
-          // Z: Level 1 at top, Level 16 at bottom (top to bottom)
-          const posY = (gridSize.z - 1 - z) * 2 + verticalOffset
+          // Position cube with corrected coordinates (adjusted for new geometry size)
+          const posX = (x - (gridSize.x - 1) / 2) * 1.4  // X spacing for width 1.2
+          const posZ = -((y - (gridSize.y - 1) / 2) * 2)  // Z spacing for depth 1.2  
+          const posY = (gridSize.z - 1 - z) * 1.4 + verticalOffset  // Y spacing for height 2.4
 
-          // Find data for this position (level 1 = top, level 16 = bottom)
+          // Find data for this position
           const dataItem = cubeData.find(item => item.level === z + 1)
           const isEmpty = !dataItem
 
-          // Create cube geometry and material
-          const geometry = new THREE.BoxGeometry(1.8, 1.8, 1.8)
-          const material = new THREE.MeshLambertMaterial({
-            color: isEmpty ? 0x333333 : dataItem.color || 0x666666,
-            transparent: true,
-            opacity: isEmpty ? 0.3 : 1.0
-          })
+          // Set instance matrix
+          dummy.current.position.set(posX, posY, posZ)
+          dummy.current.updateMatrix()
+          instancedMesh.setMatrixAt(instanceIndex, dummy.current.matrix)
+          instanceMatrixRef.current[instanceIndex] = dummy.current.matrix.clone()
 
-          const cube = new THREE.Mesh(geometry, material)
-          cube.position.set(posX, posY, posZ)
-          cube.castShadow = true
-          cube.receiveShadow = true
+          // Set instance color - THREE.Color handles named colors and hex
+          const colorString = isEmpty ? '#333333' : (dataItem?.color || '#666666')
+          const color = new THREE.Color(colorString)
+          instancedMesh.setColorAt(instanceIndex, color)
+          instanceColorRef.current[instanceIndex] = color.clone()
 
-          // Store cell info with corrected coordinates
+          // Store cell info
           const cellInfo: CellInfo = {
             data: {
-              x: x,                   // Normal X coordinate (x0 at left, x9 at right)
-              y: y,                   // Normal Y coordinate (y0 at front, y9 at back)
-              z: z + 1,               // Level (1 = top, 16 = bottom)
+              x: x,
+              y: y,
+              z: z + 1,
               level: z + 1,
               sku: dataItem?.sku || '',
               color: dataItem?.color || '#333333',
@@ -240,23 +267,28 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
             isEmpty
           }
 
-          cellDataRef.current.set(cube, cellInfo)
-          cubesRef.current.push(cube)
-          sceneRef.current.add(cube)
+          cellDataRef.current[instanceIndex] = cellInfo
+          instanceIndex++
         }
       }
     }
+
+    instancedMesh.instanceMatrix.needsUpdate = true
+    instancedMesh.instanceColor.needsUpdate = true
+    
+    instancedMeshRef.current = instancedMesh
+    sceneRef.current.add(instancedMesh)
   }, [cubeData, gridSize])
 
   // Add coordinate axes with labels
   const addCoordinateAxes = useCallback(() => {
     if (!sceneRef.current) return
-     const verticalOffset = - (gridSize.z * 2) / 2
+     const verticalOffset = - (gridSize.z * 1.4) 
     // X-axis (left to right) - Red line - positioned at back beside the grid
     const xAxisMaterial = new THREE.LineBasicMaterial({ color: '#ffffff', linewidth: 3 })
     const xAxisGeometry = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(-(gridSize.x - 1), 0 + verticalOffset, (gridSize.y - 1) + 2),
-      new THREE.Vector3(gridSize.x - 1, 0 + verticalOffset, (gridSize.y - 1) + 2)
+      new THREE.Vector3(-(gridSize.x - 1) * 0.7, 0 + verticalOffset, (gridSize.y - 1) + 2),
+      new THREE.Vector3((gridSize.x - 1) * 0.7, 0 + verticalOffset, (gridSize.y - 1) + 2)
     ])
     const xAxisLine = new THREE.Line(xAxisGeometry, xAxisMaterial)
     sceneRef.current.add(xAxisLine)
@@ -264,15 +296,15 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
     // Y-axis (front to back) - Blue line - positioned beside the grid
     const yAxisMaterial = new THREE.LineBasicMaterial({ color: '#ffffff', linewidth: 3 })
     const yAxisGeometry = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(-(gridSize.x - 1) - 2, 0 + verticalOffset, -(gridSize.y - 1)),
-      new THREE.Vector3(-(gridSize.x - 1) - 2, 0 + verticalOffset, gridSize.y - 1)
+      new THREE.Vector3(-(gridSize.x - 1) * 0.7 - 2, 0 + verticalOffset, -(gridSize.y - 1)),
+      new THREE.Vector3(-(gridSize.x - 1) * 0.7 - 2, 0 + verticalOffset, (gridSize.y - 1))
     ])
     const yAxisLine = new THREE.Line(yAxisGeometry, yAxisMaterial)
     sceneRef.current.add(yAxisLine)
 
     // Add X-axis labels (0, 1, 2, ... gridSize.x-1)
     for (let x = 0; x < gridSize.x; x++) {
-      const posX = (x - (gridSize.x - 1) / 2) * 2
+      const posX = (x - (gridSize.x - 1) / 2) * 1.4
       
       // Create text label
       const canvas = document.createElement('canvas')
@@ -315,14 +347,14 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
       const material = new THREE.SpriteMaterial({ map: texture })
       const sprite = new THREE.Sprite(material)
       sprite.scale.set(1, 1, 1)
-      sprite.position.set(-(gridSize.x - 1) - 3, 0 + verticalOffset , posZ)  // Position labels beside the grid
+      sprite.position.set(-(gridSize.x - 1) * 0.7 - 3, 0 + verticalOffset , posZ)  // Position labels beside the grid
       
       sceneRef.current.add(sprite)
     }
 
     // Add Z-axis (depth/level) labels (1, 2, 3, ... gridSize.z) - from top to bottom
     for (let z = 0; z < gridSize.z; z++) {
-      const posY = (gridSize.z - 1 - z) * 2  // Level 1 at top, Level 16 at bottom
+      const posY = (gridSize.z - 1 - z) * 1.4  // Level 1 at top, Level 16 at bottom
       
       // Create text label
       const canvas = document.createElement('canvas')
@@ -340,41 +372,113 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
       const material = new THREE.SpriteMaterial({ map: texture })
       const sprite = new THREE.Sprite(material)
       sprite.scale.set(1, 1, 1)
-      sprite.position.set(-(gridSize.x - 1) - 3, posY + verticalOffset , (gridSize.y - 1) + 3)  // Position at back-left corner
+      sprite.position.set(-(gridSize.x - 1) * 0.7 - 3, posY + verticalOffset , (gridSize.y - 1) + 3)  // Position at back-left corner
       
       sceneRef.current.add(sprite)
     }
   }, [gridSize])
 
-  // Update cell opacity based on highlighting state
-  const updateCellOpacity = useCallback((highlightedCells: CellInfo[] = []) => {
-    cubesRef.current.forEach(cube => {
-      const cellInfo = cellDataRef.current.get(cube)
-      if (cellInfo && cube.material instanceof THREE.MeshLambertMaterial) {
-        const isHighlighted = highlightedCells.some(hCell => 
-          hCell.data.x === cellInfo.data.x && 
-          hCell.data.y === cellInfo.data.y && 
-          hCell.data.z === cellInfo.data.z
-        )
+  // Update cell opacity to make non-selected cells transparent
+  const updateCellTransparency = useCallback((selectedCellInfo: CellInfo | null) => {
+    if (!instancedMeshRef.current) return
+
+    const material = instancedMeshRef.current.material as THREE.MeshLambertMaterial
+
+    if (selectedCellInfo) {
+      // ENABLE transparency mode when a cell is selected
+      material.transparent = true
+      material.depthWrite = false  // Allow seeing through
+      material.needsUpdate = true
+
+      // When a cell is selected, make other cells transparent
+      cellDataRef.current.forEach((cellInfo, instanceIndex) => {
+        const isSelected = cellInfo.data.x === selectedCellInfo.data.x && 
+                          cellInfo.data.y === selectedCellInfo.data.y && 
+                          cellInfo.data.z === selectedCellInfo.data.z
         
-        if (highlightedCells.length > 0) {
-          // When there are highlighted cells
-          if (isHighlighted) {
-            // Highlighted cells: more opaque
-            cube.material.opacity = cellInfo.isEmpty ? 0.5 : 0.9
-          } else {
-            // Non-highlighted cells: very transparent
-            cube.material.opacity = cellInfo.isEmpty ? 0.1 : 0.2
-          }
+        // Get original color
+        const originalColor = instanceColorRef.current[instanceIndex]
+        const color = originalColor.clone()
+        
+        if (isSelected) {
+          // Selected cell: keep full opacity and brighten
+          color.multiplyScalar(1.3)
         } else {
-          // No highlighting: normal opacity
-          cube.material.opacity = cellInfo.isEmpty ? 0.3 : 1.0
+          // Non-selected cells: make very transparent (darken significantly)
+          color.multiplyScalar(cellInfo.isEmpty ? 0.15 : 0.25)
         }
         
-        // Ensure material is marked as needing update
-        cube.material.needsUpdate = true
+        instancedMeshRef.current?.setColorAt(instanceIndex, color)
+      })
+    } else {
+      // DISABLE transparency mode when no cell is selected
+      material.transparent = false
+      material.depthWrite = true   // Back to solid/opaque
+      material.needsUpdate = true
+
+      // No cell selected: restore normal solid colors
+      cellDataRef.current.forEach((cellInfo, instanceIndex) => {
+        const originalColor = instanceColorRef.current[instanceIndex]
+        const color = originalColor.clone()
+        color.multiplyScalar(cellInfo.isEmpty ? 0.8 : 1.0)
+        instancedMeshRef.current?.setColorAt(instanceIndex, color)
+      })
+    }
+    
+    if (instancedMeshRef.current?.instanceColor) {
+      instancedMeshRef.current.instanceColor.needsUpdate = true
+    }
+  }, [])
+
+  // Update cell opacity based on highlighting state for InstancedMesh (for row highlighting)
+  const updateCellOpacity = useCallback((highlightedCells: CellInfo[] = []) => {
+    if (!instancedMeshRef.current) return
+
+    const material = instancedMeshRef.current.material as THREE.MeshLambertMaterial
+
+    if (highlightedCells.length > 0) {
+      // Enable transparency for row highlighting
+      material.transparent = true
+      material.depthWrite = false
+      material.needsUpdate = true
+    } else {
+      // Disable transparency when no highlighting - make completely solid
+      material.transparent = false
+      material.depthWrite = true
+      material.needsUpdate = true
+    }
+
+    cellDataRef.current.forEach((cellInfo, instanceIndex) => {
+      const isHighlighted = highlightedCells.some(hCell => 
+        hCell.data.x === cellInfo.data.x && 
+        hCell.data.y === cellInfo.data.y && 
+        hCell.data.z === cellInfo.data.z
+      )
+      
+      // Get original color
+      const originalColor = instanceColorRef.current[instanceIndex]
+      const color = originalColor.clone()
+      
+      if (highlightedCells.length > 0) {
+        // When there are highlighted cells
+        if (isHighlighted) {
+          // Highlighted cells: more saturated
+          color.multiplyScalar(cellInfo.isEmpty ? 0.7 : 1.2)
+        } else {
+          // Non-highlighted cells: much dimmer
+          color.multiplyScalar(cellInfo.isEmpty ? 0.2 : 0.3)
+        }
+      } else {
+        // No highlighting: use original color with normal intensity - SOLID
+        color.multiplyScalar(cellInfo.isEmpty ? 0.8 : 1.0)
       }
+      
+      instancedMeshRef.current?.setColorAt(instanceIndex, color)
     })
+    
+    if (instancedMeshRef.current?.instanceColor) {
+      instancedMeshRef.current.instanceColor.needsUpdate = true
+    }
   }, [])
 
   // Row highlighting functions
@@ -391,7 +495,7 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
     const rowCells: CellInfo[] = []
     const selectedCellZ = selectedCell.data.z
     
-    cellDataRef.current.forEach((cellInfo, mesh) => {
+    cellDataRef.current.forEach((cellInfo, instanceIndex) => {
       let shouldHighlight = false
       
       if (type === 'x') {
@@ -497,9 +601,28 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
     highlightMeshesRef.current = []
     setHighlightedRow({ type: null, value: null, cells: [] })
     
-    // Restore normal opacity for all cells
-    updateCellOpacity([])
-  }, [updateCellOpacity])
+    // Restore completely solid state (same as when no cell is selected)
+    if (instancedMeshRef.current) {
+      const material = instancedMeshRef.current.material as THREE.MeshLambertMaterial
+      
+      // Make material completely solid/opaque
+      material.transparent = false
+      material.depthWrite = true
+      material.needsUpdate = true
+
+      // Restore normal solid colors
+      cellDataRef.current.forEach((cellInfo, instanceIndex) => {
+        const originalColor = instanceColorRef.current[instanceIndex]
+        const color = originalColor.clone()
+        color.multiplyScalar(cellInfo.isEmpty ? 0.8 : 1.0)
+        instancedMeshRef.current?.setColorAt(instanceIndex, color)
+      })
+
+      if (instancedMeshRef.current.instanceColor) {
+        instancedMeshRef.current.instanceColor.needsUpdate = true
+      }
+    }
+  }, [])
 
   // Mouse control handlers
   const addMouseControls = useCallback(() => {
@@ -576,13 +699,30 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
       const raycaster = new THREE.Raycaster()
       raycaster.setFromCamera(mouse, cameraRef.current)
 
-      const intersects = raycaster.intersectObjects(cubesRef.current)
-      if (intersects.length > 0) {
-        const intersectedCube = intersects[0].object as THREE.Mesh
-        const cellInfo = cellDataRef.current.get(intersectedCube)
-        if (cellInfo) {
-          setSelectedCell(cellInfo)
-          createSelectedCellHighlight(cellInfo)
+      if (instancedMeshRef.current) {
+        const intersects = raycaster.intersectObject(instancedMeshRef.current)
+        if (intersects.length > 0) {
+          const instanceId = intersects[0].instanceId
+          if (instanceId !== undefined && cellDataRef.current[instanceId]) {
+            const cellInfo = cellDataRef.current[instanceId]
+            
+            // Check if clicking the same cell that's already selected (toggle functionality)
+            if (selectedCell && 
+                selectedCell.data.x === cellInfo.data.x && 
+                selectedCell.data.y === cellInfo.data.y && 
+                selectedCell.data.z === cellInfo.data.z) {
+              // Unselect the cell (same as clicking X button)
+              setSelectedCell(null)
+              if (selectedCellHighlightRef.current && sceneRef.current) {
+                sceneRef.current.remove(selectedCellHighlightRef.current)
+                selectedCellHighlightRef.current = null
+              }
+            } else {
+              // Select the new cell (no transparency, just highlight and details)
+              setSelectedCell(cellInfo)
+              createSelectedCellHighlight(cellInfo)
+            }
+          }
         }
       }
     }
@@ -642,7 +782,7 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
     }
 
     // Update camera position display
-    const roundedX = Math.round(cameraRef.current.position.x * 10) / 10
+    const roundedX = Math.round(cameraRef.current.position.x * 10) / 5
     const roundedY = Math.round(cameraRef.current.position.y * 10) / 10
     const roundedZ = Math.round(cameraRef.current.position.z * 10) / 10
 
@@ -664,8 +804,9 @@ const Warehouse3DCube: React.FC<Warehouse3DCubeProps> = ({ cubeData, gridSize })
   const resetCameraView = useCallback(() => {
     if (!cameraRef.current) return
 
-    const distance = Math.max(gridSize.x, gridSize.y, gridSize.z) * 3
-    const targetPosition = new THREE.Vector3(distance, distance, distance)
+    // Reset back to camera default position , look from perspective of x0,y0 axis
+    const targetPosition = new THREE.Vector3(-30, -10, 35)
+
 
     // Create smooth transition
     const startPosition = cameraRef.current.position.clone()
